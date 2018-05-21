@@ -1,5 +1,5 @@
 {
-    "schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": { 
         "envPrefix": {
@@ -62,7 +62,7 @@
         }
     },
     "variables": {
-        "diagStorageName": "[take(concat(parameters('envPrefix'),'diagsa',uniqueString(resourceGroup().id)),24)]",
+        "diagStorageName": "[take(concat(tolower(replace(parameters('envPrefix'),'-','')),'diagsa',uniqueString(resourceGroup().id)),24)]",
         "diagStorageUri": "[concat('https', '://',variables('diagStorageName'),'.blob.core.windows.net', '/')]",
         "dcName": "[concat(parameters('envPrefix'),'-DC')]",
         "shpName": "[concat(parameters('envPrefix'),'-SHP')]",
@@ -218,7 +218,7 @@
                     {
                         "name": "ipconfig1",
                         "properties": {
-                            "privateIPAddress": "172.17.3.4",
+                            "privateIPAddress": "172.16.3.4",
                             "privateIPAllocationMethod": "Static",
                             "publicIPAddress": {
                                 "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('dcPipName'))]"
@@ -284,29 +284,55 @@
             "name": "SqlTemplate",
             "type": "Microsoft.Resources/deployments",
             "properties": {
-                "mode": "incremental",
+                "mode": "Incremental",
                 "templateLink": {
-                    "uri":"[parameters('sqlTemplateURL]",
+                    "uri":"[variables('sqlTemplateURL')]",
                     "contentVersion":"1.0.0.0"
                 },
                 "parameters": {
-                    "vmName": "[variables('sqlName')",
-                    "adminUsername": "[parameters('adminUsername')]",
-                    "adminPassword": "[parameters('adminPassword')]",
-                    "adDomain": "[parameters('domainName')]",
-                    "vnetName": "[variables('vnetName')]",
-                    "vnetResourceGroup": "[resourceGroup().name]",
-                    "subnetName": "default",
-                    "privateIp": "dhcp",
-                    "sqlVersion": "SQL Server 2016 SP1 Developer (free) on Windows Server 2016",
-                    "vmSize": "[parameters('sqlVmSize')]",
-                    "storageSku": "Standard_LRS",
-                    "#ofDataDisks": 1,
-                    "diagStorageAccountName": "[variables('diagStorageName')]"
+                    "vmName": {
+                        "value": "[variables('sqlName')]"
+                    },
+                    "adminUsername": {
+                        "value": "[parameters('adminUsername')]"
+                    },
+                    "adminPassword": {
+                        "value": "[parameters('adminPassword')]"
+                    },
+                    "adDomain": {
+                        "value": "[parameters('domainName')]"
+                    },
+                    "vnetName": {
+                        "value": "[variables('vnetName')]"
+                    },
+                    "vnetResourceGroup": {
+                        "value": "[resourceGroup().name]"
+                    },
+                    "subnetName": {
+                        "value": "default"
+                    },
+                    "privateIp":  {
+                        "value":"dhcp"
+                    },
+                    "sqlVersion": {
+                        "value": "SQL Server 2016 SP1 Developer (free) on Windows Server 2016"
+                    },
+                    "vmSize": {
+                        "value": "[parameters('sqlVmSize')]"
+                    },
+                    "storageSku": {
+                        "value": "Standard_LRS"
+                    },
+                    "#ofDataDisks": {
+                        "value": 1
+                    },
+                    "diagStorageAccountName": {
+                        "value": "[variables('diagStorageName')]"
+                    }
                 }
             },
             "dependsOn":[
-                "[resourceId('Microsoft.Compute/virtualMachines/extensions', concat(variables('dcName'),'/InstallDomainController'))]"
+                "[resourceId('Microsoft.Compute/virtualMachines/extensions', variables('dcName'), 'InstallDomainController')]"
             ]
         },
         {
@@ -370,7 +396,7 @@
                     "location": "[resourceGroup().location]",
                     "dependsOn": [
                         "[resourceId('Microsoft.Compute/virtualMachines', variables('shpName'))]",
-                        "[resourceId('Microsoft.Compute/virtualMachines/extensions', concat(variables('dcName'),'/InstallDomainController'))]"
+                        "[resourceId('Microsoft.Compute/virtualMachines/extensions', variables('dcName'), 'InstallDomainController')]"
                     ],
                     "properties": {
                 
@@ -408,16 +434,11 @@
             "apiVersion": "2017-03-01",
             "location": "[resourceGroup().location]",
             "properties": {
-        
                 "ipConfigurations": [
                     {
                         "name": "ipconfig1",
                         "properties": {
-                            "privateIPAddress": "172.17.3.4",
-                            "privateIPAllocationMethod": "Static",
-                            "publicIPAddress": {
-                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('dcPipName'))]"
-                            },
+                            "privateIPAllocationMethod": "Dynamic",
                             "subnet": {
                                 "id": "[concat(resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), '/subnets/default')]"
                             }
@@ -426,10 +447,6 @@
                 ],
                 "dnsSettings": {
                     "dnsServers": []
-                },
-                "enableIPForwarding": false,
-                "networkSecurityGroup": {
-                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('dcNsgName'))]"
                 }
             },
             "dependsOn": [
@@ -439,15 +456,52 @@
             ]
         },
         {
-            "type": "Microsoft.Network/publicIPAddresses",
-            "name": "[variables('dcPipName')]",
-            "apiVersion": "2017-03-01",
-            "location": "[resourceGroup().location]",
+            "apiVersion": "2015-01-01",
+            "type": "Microsoft.Resources/deployments",
+            "name": "updateVNet",
+            "dependsOn": [
+                "[resourceId('Microsoft.Compute/virtualMachines/extensions', variables('dcName'), 'InstallDomainController')]"
+            ],
             "properties": {
-                "publicIPAllocationMethod": "Dynamic",
-                "idleTimeoutInMinutes": 4
-            },
-            "dependsOn": []
+                "mode": "Incremental",
+                "parameters": {},
+                "template": {
+                    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "variables": {},
+                    "resources": [
+                        {
+                            "apiVersion": "2017-03-01",
+                            "name": "[variables('vnetName')]",
+                            "location":"[resourceGroup().location]",
+                            "type": "Microsoft.Network/virtualNetworks",
+                            "properties": {
+                                "addressSpace": {
+                                    "addressPrefixes": [
+                                        "172.16.3.0/24"
+                                    ]
+                                },
+                                "dhcpOptions": {
+                                    "dnsServers": [
+                                        "172.16.3.4"
+                                    ]
+                                },
+                                "subnets": [
+                                    {
+                                        "name": "default",
+                                        "properties": {
+                                            "addressPrefix": "172.16.3.0/24"
+                                        }
+                                    }
+                                ],
+                                "virtualNetworkPeerings": []
+                            }
+                        }
+                    ],
+                    "outputs": {}
+                }
+            }
         }
     ],
     "outputs": { }

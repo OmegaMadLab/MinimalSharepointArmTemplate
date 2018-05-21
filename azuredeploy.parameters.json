@@ -9,10 +9,10 @@
             "value": "standard_B2s"
         }, 
         "shpVmSize": {
-            "value": "standard_D3_v2"
+            "value": "Standard_D3_v2"
         },
         "sqlVmSize": {
-            "value": "standard_D2_v2"
+            "value": "Standard_D2_v2"
         },
         "adminUserName": {
             "value": "sjadmin"
