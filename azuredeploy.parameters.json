@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "envPrefix": {
+            "value": "MO-SHPLAB"
+        },
+        "dcVmSize": {
+            "value": "standard_B2s"
+        }, 
+        "shpVmSize": {
+            "value": "standard_D3_v2"
+        },
+        "sqlVmSize": {
+            "value": "standard_D2_v2"
+        },
+        "adminUserName": {
+            "value": "sjadmin"
+        },
+        "adminPassword": {
+            "value": "$oftJam.9!2017"
+        },
+        "domainName": {
+            "value": "sj.local"
+        },
+        "shpVersion": {
+            "value": "2013"
+        }
+    }
+}

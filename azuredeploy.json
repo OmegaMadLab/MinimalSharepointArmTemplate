@@ -1,0 +1,454 @@
+{
+    "schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": { 
+        "envPrefix": {
+            "defaultValue": "MO-SHPLAB",
+            "type": "string",
+            "metadata": {      
+                "description": "Prefix for items naming convention"
+            }
+        },
+        "shpVersion": {
+           "type": "string",
+           "allowedValues": [
+               "2013",
+               "2016"
+           ],
+           "metadata": {
+                "description": "The version of SharePoint"
+            }
+        },
+        "DcVmSize": {
+            "defaultValue": "standard_B2s",
+            "type": "string",
+            "metadata": {      
+                "description": "VM size used for DC"
+            }
+        },
+        "ShpVmSize": {
+            "defaultValue": "standard_D3_v2",
+            "type": "string",
+            "metadata": {      
+                "description": "VM size used for SHP"
+            }
+        },
+        "SqlVmSize": {
+            "defaultValue": "standard_D3_v2",
+            "type": "string",
+            "metadata": {      
+                "description": "VM size used for SQL"
+            }
+        }, 
+        "adminUserName": {
+            "defaultValue": "sjadmin",
+            "type": "string",
+            "metadata": {      
+                "description": "Local and domain admin username"
+            }
+        },
+        "adminPassword": {
+            "type": "securestring",
+            "metadata": {      
+                "description": "Local and domain admin password"
+            }
+        },
+        "domainName": {
+            "type": "string",
+            "defaultValue": "sj.local",
+            "metadata": {
+                "description": "AD domain name"
+            }
+        }
+    },
+    "variables": {
+        "diagStorageName": "[take(concat(parameters('envPrefix'),'diagsa',uniqueString(resourceGroup().id)),24)]",
+        "diagStorageUri": "[concat('https', '://',variables('diagStorageName'),'.blob.core.windows.net', '/')]",
+        "dcName": "[concat(parameters('envPrefix'),'-DC')]",
+        "shpName": "[concat(parameters('envPrefix'),'-SHP')]",
+        "sqlName": "[concat(parameters('envPrefix'),'-SQL')]",
+        "vnetName": "[concat(parameters('envPrefix'),'-VNET')]",
+        "dcPipName": "[concat(variables('dcName'),'-PIP')]",
+        "dcNsgName": "[concat(variables('dcName'),'-NSG')]",
+        "adDCModulesURL": "https://raw.githubusercontent.com/OmegaMadLab/MinimalSharepointArmTemplate/master/scripts/CreateADDC.ps1.zip",
+        "adDCConfigurationFunction": "CreateADDC.ps1\\CreateADDC",
+        "adJoinModulesURL": "https://raw.githubusercontent.com/OmegaMadLab/MinimalSharepointArmTemplate/master/scripts/ADDomainJoin.ps1.zip",
+        "sqlTemplateURL": "https://raw.githubusercontent.com/OmegaMadLab/OptimizedSqlVm/master/azuredeploy.json",
+        "adJoinConfigurationFunction": "ADDomainJoin.ps1\\ADDomainJoin"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "sku": {
+                "name": "Standard_LRS",
+                "tier": "Standard"
+            },
+            "kind": "Storage",
+            "name": "[variables('diagStorageName')]",
+            "apiVersion": "2016-01-01",
+            "location": "[resourceGroup().location]",
+            "tags": {},
+            "properties": {},
+            "dependsOn": []
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks",
+            "name": "[variables('vnetName')]",
+            "apiVersion": "2017-03-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+        
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "172.16.3.0/24"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "default",
+                        "properties": {
+                            "addressPrefix": "172.16.3.0/24"
+                        }
+                    }
+                ],
+                "virtualNetworkPeerings": []
+            },
+            "dependsOn": []
+        },
+        {
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[variables('dcName')]",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[resourceGroup().location]",
+            "properties": {
+        
+                "hardwareProfile": {
+                    "vmSize": "[parameters('dcVmSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "MicrosoftWindowsServer",
+                        "offer": "WindowsServer",
+                        "sku": "2016-Datacenter",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "osType": "Windows",
+                        "name": "[concat(variables('dcName'),'-OsDisk')]",
+                        "createOption": "FromImage",
+                        "caching": "ReadWrite",
+                        "managedDisk": {
+                            "storageAccountType": "Standard_LRS"
+                        },
+                        "diskSizeGB": 128
+                    },
+                    "dataDisks": []
+                },
+                "osProfile": {
+                    "computerName": "[variables('dcName')]",
+                    "adminUsername": "[parameters('adminUserName')]",
+                    "adminPassword": "[parameters('adminPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVMAgent": true,
+                        "enableAutomaticUpdates": true
+                    },
+                    "secrets": []
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('dcName'),'-NIC'))]"
+                        }
+                    ]
+                },
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": true,
+                        "storageUri": "[variables('diagStorageUri')]"
+                    }
+                }
+            },
+            "resources": [
+                {
+                    "type": "Microsoft.Compute/virtualMachines/extensions",
+                    "name": "[concat(variables('dcName'),'/InstallDomainController')]",
+                    "apiVersion": "2016-04-30-preview",
+                    "location": "[resourceGroup().location]",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Compute/virtualMachines', variables('dcName'))]"
+                    ],
+                    "properties": {
+                
+                        "publisher": "Microsoft.Powershell",
+                        "type": "DSC",
+                        "typeHandlerVersion": "2.19",
+                        "autoUpgradeMinorVersion": false,
+                        "settings": {
+                            "modulesURL": "[variables('adDCModulesURL')]",
+                            "configurationFunction": "[variables('adDCConfigurationFunction')]",
+                            "properties": {
+                                "domainName": "[parameters('domainName')]",
+                                "adminCreds": {
+                                    "userName": "[parameters('adminUserName')]",
+                                    "password": "PrivateSettingsRef:adminPassword"
+                                }
+                            }
+                        },
+                        "protectedSettings": {
+                            "items": {
+                                "adminPassword": "[parameters('adminPassword')]"
+                            }
+                        }
+                    }
+                }
+            ],
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('dcName'),'-NIC'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('diagStorageName'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[concat(variables('dcName'),'-NIC')]",
+            "apiVersion": "2017-03-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+        
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "privateIPAddress": "172.17.3.4",
+                            "privateIPAllocationMethod": "Static",
+                            "publicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('dcPipName'))]"
+                            },
+                            "subnet": {
+                                "id": "[concat(resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), '/subnets/default')]"
+                            }
+                        }
+                    }
+                ],
+                "dnsSettings": {
+                    "dnsServers": []
+                },
+                "enableIPForwarding": false,
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('dcNsgName'))]"
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses', variables('dcPipName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', variables('dcNsgName'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('dcPipName')]",
+            "apiVersion": "2017-03-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "idleTimeoutInMinutes": 4
+            },
+            "dependsOn": []
+        },
+        {
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('dcNsgName')]",
+            "apiVersion": "2017-03-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+        
+                "securityRules": [
+                    {
+                        "name": "default-allow-rdp",
+                        "properties": {
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "3389",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "*",
+                            "access": "Allow",
+                            "priority": 1000,
+                            "direction": "Inbound"
+                        }
+                    }
+                ]
+            },
+            "dependsOn": []
+        },
+        {
+            "apiVersion": "2017-05-10",
+            "name": "SqlTemplate",
+            "type": "Microsoft.Resources/deployments",
+            "properties": {
+                "mode": "incremental",
+                "templateLink": {
+                    "uri":"[parameters('sqlTemplateURL]",
+                    "contentVersion":"1.0.0.0"
+                },
+                "parameters": {
+                    "vmName": "[variables('sqlName')",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]",
+                    "adDomain": "[parameters('domainName')]",
+                    "vnetName": "[variables('vnetName')]",
+                    "vnetResourceGroup": "[resourceGroup().name]",
+                    "subnetName": "default",
+                    "privateIp": "dhcp",
+                    "sqlVersion": "SQL Server 2016 SP1 Developer (free) on Windows Server 2016",
+                    "vmSize": "[parameters('sqlVmSize')]",
+                    "storageSku": "Standard_LRS",
+                    "#ofDataDisks": 1,
+                    "diagStorageAccountName": "[variables('diagStorageName')]"
+                }
+            },
+            "dependsOn":[
+                "[resourceId('Microsoft.Compute/virtualMachines/extensions', concat(variables('dcName'),'/InstallDomainController'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[variables('shpName')]",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[resourceGroup().location]",
+            "properties": {
+        
+                "hardwareProfile": {
+                    "vmSize": "[parameters('shpVmSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "MicrosoftSharePoint",
+                        "offer": "MicrosoftSharePointServer",
+                        "sku": "[parameters('shpVersion')]",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "osType": "Windows",
+                        "name": "[concat(variables('shpName'),'-OsDisk')]",
+                        "createOption": "FromImage",
+                        "caching": "ReadWrite",
+                        "managedDisk": {
+                            "storageAccountType": "Standard_LRS"
+                        },
+                        "diskSizeGB": 128
+                    },
+                    "dataDisks": []
+                },
+                "osProfile": {
+                    "computerName": "[variables('shpName')]",
+                    "adminUsername": "[parameters('adminUserName')]",
+                    "adminPassword": "[parameters('adminPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVMAgent": true,
+                        "enableAutomaticUpdates": true
+                    },
+                    "secrets": []
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('shpName'),'-NIC'))]"
+                        }
+                    ]
+                },
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": true,
+                        "storageUri": "[variables('diagStorageUri')]"
+                    }
+                }
+            },
+            "resources": [
+                {
+                    "type": "Microsoft.Compute/virtualMachines/extensions",
+                    "name": "[concat(variables('shpName'),'/DomainJoin')]",
+                    "apiVersion": "2016-04-30-preview",
+                    "location": "[resourceGroup().location]",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Compute/virtualMachines', variables('shpName'))]",
+                        "[resourceId('Microsoft.Compute/virtualMachines/extensions', concat(variables('dcName'),'/InstallDomainController'))]"
+                    ],
+                    "properties": {
+                
+                        "publisher": "Microsoft.Powershell",
+                        "type": "DSC",
+                        "typeHandlerVersion": "2.19",
+                        "autoUpgradeMinorVersion": false,
+                        "settings": {
+                            "modulesURL": "[variables('adJoinModulesURL')]",
+                            "configurationFunction": "[variables('adJoinConfigurationFunction')]",
+                            "properties": {
+                                "domainName": "[parameters('domainName')]",
+                                "adminCreds": {
+                                    "userName": "[parameters('adminUserName')]",
+                                    "password": "PrivateSettingsRef:adminPassword"
+                                }
+                            }
+                        },
+                        "protectedSettings": {
+                            "items": {
+                                "adminPassword": "[parameters('adminPassword')]"
+                            }
+                        }
+                    }
+                }
+            ],
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('shpName'),'-NIC'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('diagStorageName'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[concat(variables('shpName'),'-NIC')]",
+            "apiVersion": "2017-03-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+        
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "privateIPAddress": "172.17.3.4",
+                            "privateIPAllocationMethod": "Static",
+                            "publicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('dcPipName'))]"
+                            },
+                            "subnet": {
+                                "id": "[concat(resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), '/subnets/default')]"
+                            }
+                        }
+                    }
+                ],
+                "dnsSettings": {
+                    "dnsServers": []
+                },
+                "enableIPForwarding": false,
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('dcNsgName'))]"
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses', variables('dcPipName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', variables('dcNsgName'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('dcPipName')]",
+            "apiVersion": "2017-03-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "idleTimeoutInMinutes": 4
+            },
+            "dependsOn": []
+        }
+    ],
+    "outputs": { }
+}
